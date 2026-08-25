@@ -4,6 +4,10 @@ This repository contains the legacy discrete-elastic-rod simulator that will be
 used as the mechanics foundation for the mechanics-informed RRT described in
 [`doc/README_mechanics_informed_RRT.md`](doc/README_mechanics_informed_RRT.md).
 
+The current refactor status, design decisions, completed work, and exact next
+milestone are recorded in
+[`doc/DEVELOPMENT_HANDOFF.md`](doc/DEVELOPMENT_HANDOFF.md).
+
 ## Build
 
 The project requires a C++17 compiler, Eigen3, LAPACK, OpenGL, GLU, and GLUT.
