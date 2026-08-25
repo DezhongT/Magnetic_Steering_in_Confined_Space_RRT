@@ -1,0 +1,1 @@
+g++ -I /usr/local/include/eigen-3.3.7/ main.cpp world.cpp elasticRod.cpp elasticStretchingForce.cpp elasticBendingForce.cpp elasticTwistingForce.cpp externalGravityForce.cpp inertialForce.cpp dampingForce.cpp externalMagneticForce.cpp timeStepper.cpp setInput.cpp externalContactForce.cpp -llapack -lGL -lglut -lGLU -Ofast -o simDER
