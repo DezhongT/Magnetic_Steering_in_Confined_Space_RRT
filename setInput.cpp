@@ -24,10 +24,35 @@ setInput::setInput()
   AddOption("baVector", "baVector", baVector);
   AddOption("brVector", "brVector", brVector);
   AddOption("muZero", "muZero", muZero);
+  AddOption("magneticModel", "legacy or axial_tip", magneticModel);
+  AddOption("tipDipoleMoment", "axial tip dipole magnitude", tipDipoleMoment);
   AddOption("scaleRendering", "scaleRendering", scaleRendering);
   AddOption("thickness", "thickness", thickness);
+  AddOption("shellCenter", "spherical shell center", shellCenter);
+  AddOption("shellRadius", "spherical shell reference radius", shellRadius);
+  AddOption("shellMinusThickness", "spherical shell inward thickness", shellMinusThickness);
+  AddOption("shellPlusThickness", "spherical shell outward thickness", shellPlusThickness);
+  AddOption("cavityCenter", "outer spherical cavity center", cavityCenter);
+  AddOption("cavityRadius", "outer spherical cavity radius", cavityRadius);
+  AddOption("obstacleCenter", "excluded spherical obstacle center", obstacleCenter);
+  AddOption("obstacleRadius", "excluded spherical obstacle radius", obstacleRadius);
+  AddOption("secondObstacleCenter", "second excluded spherical obstacle center", secondObstacleCenter);
+  AddOption("secondObstacleRadius", "second excluded spherical obstacle radius", secondObstacleRadius);
   AddOption("dBar", "dBar", dBar);
   AddOption("stiffness", "stiffness", stiffness);
+  AddOption("contactModel", "legacy, planar_barrier, spherical_shell_barrier, spherical_obstacle_barrier, double_spherical_obstacle_barrier, or none", contactModel);
+  AddOption("tipSafeDistance", "minimum permitted tip clearance", tipSafeDistance);
+  AddOption("maxLineSearchIter", "maximum static-Newton backtracks", maxLineSearchIter);
+  AddOption("lineSearchReduction", "static-Newton step reduction", lineSearchReduction);
+  AddOption("lineSearchArmijo", "static-Newton Armijo coefficient", lineSearchArmijo);
+  AddOption("kktGapTolerance", "planar KKT gap tolerance", kktGapTolerance);
+  AddOption("kktMultiplierTolerance", "planar KKT multiplier tolerance", kktMultiplierTolerance);
+  AddOption("kktComplementarityTolerance", "planar KKT complementarity tolerance", kktComplementarityTolerance);
+  AddOption("kktMaxActiveSetUpdates", "maximum planar KKT active-set changes", kktMaxActiveSetUpdates);
+  AddOption("insertionModel", "none or proximal_guide", insertionModel);
+  AddOption("insertionCoordinate", "initial nonnegative insertion coordinate", insertionCoordinate);
+  AddOption("insertionStiffness", "proximal guide axial stiffness", insertionStiffness);
+  AddOption("insertionAxis", "proximal guide insertion axis", insertionAxis);
 }
 
 setInput::~setInput()

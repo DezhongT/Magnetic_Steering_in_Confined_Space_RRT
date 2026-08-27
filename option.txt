@@ -13,10 +13,35 @@ gVector 0.0 10.0 -100.0
 baVector 0.0 0.0 -100.0
 brVector 10.0 0.0 0.0
 muZero 0.1
+magneticModel legacy
+tipDipoleMoment 0.0
 saveData 1
 scaleRendering 0.8
 viscosity 0.01
 thickness 1e-1
+shellCenter 0.0 0.0 0.0
+shellRadius 1.0
+shellMinusThickness 0.2
+shellPlusThickness 0.2
+cavityCenter 0.0 0.0 0.0
+cavityRadius 2.0
+obstacleCenter 0.0 0.5 0.0
+obstacleRadius 0.1
+secondObstacleCenter 0.0 -0.5 0.0
+secondObstacleRadius 0.1
 dBar 5e-3
 stiffness 1e4
+contactModel legacy
+tipSafeDistance 0.0
+maxLineSearchIter 20
+lineSearchReduction 0.5
+lineSearchArmijo 1e-4
+kktGapTolerance 1e-8
+kktMultiplierTolerance 1e-8
+kktComplementarityTolerance 1e-10
+kktMaxActiveSetUpdates 20
+insertionModel none
+insertionCoordinate 0.0
+insertionStiffness 1e3
+insertionAxis 1.0 0.0 0.0
 render 1

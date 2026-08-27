@@ -1,5 +1,7 @@
 #include "elasticRod.h"
 
+#include <stdexcept>
+
 elasticRod::elasticRod(MatrixXd initialNodes, MatrixXd undeformed, 
 	double m_rho, double m_rodRadius, double m_dt,
 	double m_youngM, double m_shearM, double m_rodLength)
@@ -470,6 +472,115 @@ void elasticRod::updateGuess()
 	}
 }
 
+RodState elasticRod::captureState() const
+{
+	RodState state;
+	state.configuration = x;
+	state.previousConfiguration = x0;
+	state.velocity = u;
+
+	state.referenceDirector1 = d1;
+	state.referenceDirector2 = d2;
+	state.previousReferenceDirector1 = d1_old;
+	state.previousReferenceDirector2 = d2_old;
+
+	state.materialDirector1 = m1;
+	state.materialDirector2 = m2;
+	state.previousMaterialDirector1 = m1_old;
+	state.previousMaterialDirector2 = m2_old;
+
+	state.tangent = tangent;
+	state.previousTangent = tangent_old;
+	state.referenceTwist = refTwist;
+	state.previousReferenceTwist = refTwist_old;
+
+	state.edgeLength = edgeLen;
+	state.curvatureBinormal = kb;
+	state.curvature = kappa;
+	return state;
+}
+
+void elasticRod::restoreState(const RodState &state)
+{
+	const bool invalidVectorDimensions =
+		state.configuration.size() != ndof ||
+		state.previousConfiguration.size() != ndof ||
+		state.velocity.size() != ndof ||
+		state.referenceTwist.size() != ne ||
+		state.previousReferenceTwist.size() != ne ||
+		state.edgeLength.size() != ne;
+
+	const bool invalidDirectorDimensions =
+		state.referenceDirector1.rows() != ne || state.referenceDirector1.cols() != 3 ||
+		state.referenceDirector2.rows() != ne || state.referenceDirector2.cols() != 3 ||
+		state.previousReferenceDirector1.rows() != ne || state.previousReferenceDirector1.cols() != 3 ||
+		state.previousReferenceDirector2.rows() != ne || state.previousReferenceDirector2.cols() != 3 ||
+		state.materialDirector1.rows() != ne || state.materialDirector1.cols() != 3 ||
+		state.materialDirector2.rows() != ne || state.materialDirector2.cols() != 3 ||
+		state.previousMaterialDirector1.rows() != ne || state.previousMaterialDirector1.cols() != 3 ||
+		state.previousMaterialDirector2.rows() != ne || state.previousMaterialDirector2.cols() != 3 ||
+		state.tangent.rows() != ne || state.tangent.cols() != 3 ||
+		state.previousTangent.rows() != ne || state.previousTangent.cols() != 3;
+
+	const bool invalidCurvatureDimensions =
+		state.curvatureBinormal.rows() != nv || state.curvatureBinormal.cols() != 3 ||
+		state.curvature.rows() != nv || state.curvature.cols() != 2;
+
+	if (invalidVectorDimensions || invalidDirectorDimensions || invalidCurvatureDimensions)
+	{
+		throw std::invalid_argument("RodState dimensions do not match this elasticRod");
+	}
+
+	x = state.configuration;
+	x0 = state.previousConfiguration;
+	u = state.velocity;
+
+	d1 = state.referenceDirector1;
+	d2 = state.referenceDirector2;
+	d1_old = state.previousReferenceDirector1;
+	d2_old = state.previousReferenceDirector2;
+
+	m1 = state.materialDirector1;
+	m2 = state.materialDirector2;
+	m1_old = state.previousMaterialDirector1;
+	m2_old = state.previousMaterialDirector2;
+
+	tangent = state.tangent;
+	tangent_old = state.previousTangent;
+	refTwist = state.referenceTwist;
+	refTwist_old = state.previousReferenceTwist;
+
+	edgeLen = state.edgeLength;
+	kb = state.curvatureBinormal;
+	kappa = state.curvature;
+}
+
+void elasticRod::applyFreeDofIncrement(const VectorXd &increment)
+{
+	if (increment.size() != uncons)
+	{
+		throw std::invalid_argument("Free-DOF increment has the wrong dimension");
+	}
+
+	for (int c = 0; c < uncons; ++c)
+	{
+		x[unconstrainedMap[c]] += increment[c];
+	}
+}
+
+void elasticRod::commitStaticState()
+{
+	prepareForIteration();
+	x0 = x;
+	u.setZero();
+	d1_old = d1;
+	d2_old = d2;
+	m1_old = m1;
+	m2_old = m2;
+	tangent_old = tangent;
+	refTwist_old = refTwist;
+}
+
 Vector3d elasticRod::getVertexOld(int k)
 {
 	return Vector3d(x0(4*k), x0(4*k+1), x0(4*k+2));
@@ -510,9 +621,6 @@ void elasticRod::computeMoment()
     deltam = theta_f - theta_e;
 
 	moment = MatrixXd::Zero(nv, 3);
-
-	double thetaE;
-	double thetaF;
 
 	for (int i = 1; i < ne; i++)
 	{

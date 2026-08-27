@@ -1,0 +1,24 @@
+rodRadius 1e-2
+RodLength 1.0
+youngM 1e7
+numVertices 20
+Poisson 0.5
+deltaTime 5e-4
+totalTime 1.0
+tol 1e-6
+stol 1e-6
+maxIter 100
+density 1000.0
+gVector 0.0 0.0 0.0
+baVector 0.0 0.0 1.0
+brVector 0.0 0.0 0.0
+muZero 1.0
+magneticModel axial_tip
+tipDipoleMoment 0.005
+saveData 0
+scaleRendering 0.8
+viscosity 0.01
+thickness 1e-1
+dBar 5e-3
+stiffness 1e4
+render 0

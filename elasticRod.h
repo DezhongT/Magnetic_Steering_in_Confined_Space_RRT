@@ -2,6 +2,7 @@
 #define ELASTICROD_H
 
 #include "eigenIncludes.h"
+#include "rodState.h"
 #include <fstream>
 
 class elasticRod
@@ -21,6 +22,10 @@ class elasticRod
 	void prepareForIteration();
 	void updateNewtonX(double *dx);
 	void updateGuess();
+	RodState captureState() const;
+	void restoreState(const RodState &state);
+	void applyFreeDofIncrement(const VectorXd &increment);
+	void commitStaticState();
 	
 	// utility functions
 	Vector3d getVertex(int k);

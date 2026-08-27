@@ -63,6 +63,49 @@ void timeStepper::setZero()
 		jacobian[i] = 0;
 }
 
+StaticEvaluation timeStepper::captureEvaluation() const
+{
+	StaticEvaluation evaluation;
+	evaluation.residual = Map<const VectorXd>(totalForce, freeDOF);
+	evaluation.bandedJacobian =
+		Map<const Matrix<double, Dynamic, Dynamic, ColMajor>>(jacobian, NUMROWS, freeDOF);
+	evaluation.lowerBandwidth = kl;
+	evaluation.upperBandwidth = ku;
+	return evaluation;
+}
+
+int timeStepper::solveBandedSystem(
+	const StaticEvaluation &evaluation,
+	VectorXd &solution) const
+{
+	const int systemSize = static_cast<int>(evaluation.residual.size());
+	const int expectedRows =
+		2 * evaluation.lowerBandwidth + evaluation.upperBandwidth + 1;
+	if (systemSize != freeDOF ||
+		evaluation.bandedJacobian.rows() != expectedRows ||
+		evaluation.bandedJacobian.cols() != systemSize)
+	{
+		return -100;
+	}
+
+	MatrixXd jacobianWorkspace = evaluation.bandedJacobian;
+	solution = evaluation.residual;
+	VectorXi pivotWorkspace(systemSize);
+
+	int n = systemSize;
+	int lower = evaluation.lowerBandwidth;
+	int upper = evaluation.upperBandwidth;
+	int rightHandSides = 1;
+	int leadingDimension = expectedRows;
+	int rightHandSideLeadingDimension = systemSize;
+	int solveInfo = 0;
+
+	dgbsv_(&n, &lower, &upper, &rightHandSides,
+		jacobianWorkspace.data(), &leadingDimension, pivotWorkspace.data(),
+		solution.data(), &rightHandSideLeadingDimension, &solveInfo);
+	return solveInfo;
+}
+
 int timeStepper::integrator()
 {
 	dgbsv_(&freeDOF, &kl, &ku, &nrhs, jacobian, &NUMROWS, ipiv, totalForce, &ldb, &info);

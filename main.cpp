@@ -25,7 +25,7 @@ std::unique_ptr<world> myWorld;
 int NPTS;
 ofstream outfile;
 
-static void Key(unsigned char key, int x, int y)
+static void Key(unsigned char key, int, int)
 {
   switch (key) // ESCAPE to quit
   {

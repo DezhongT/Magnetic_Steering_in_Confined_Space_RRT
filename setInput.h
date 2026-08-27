@@ -55,12 +55,37 @@ private:
 	bool saveData = false;
 
 	double thickness = 1.0e-1;
+	Vector3d shellCenter = Vector3d::Zero();
+	double shellRadius = 1.0;
+	double shellMinusThickness = 0.2;
+	double shellPlusThickness = 0.2;
+	Vector3d cavityCenter = Vector3d::Zero();
+	double cavityRadius = 2.0;
+	Vector3d obstacleCenter = Vector3d(0.0, 0.5, 0.0);
+	double obstacleRadius = 0.1;
+	Vector3d secondObstacleCenter = Vector3d(0.0, -0.5, 0.0);
+	double secondObstacleRadius = 0.1;
     double dBar = 5.0e-3;
     double stiffness = 1.0e4;
+	string contactModel = "legacy";
+	double tipSafeDistance = 0.0;
+	int maxLineSearchIter = 20;
+	double lineSearchReduction = 0.5;
+	double lineSearchArmijo = 1.0e-4;
+	double kktGapTolerance = 1.0e-8;
+	double kktMultiplierTolerance = 1.0e-8;
+	double kktComplementarityTolerance = 1.0e-10;
+	int kktMaxActiveSetUpdates = 20;
+	string insertionModel = "none";
+	double insertionCoordinate = 0.0;
+	double insertionStiffness = 1.0e3;
+	Vector3d insertionAxis = Vector3d::UnitX();
 
 	Vector3d baVector = Vector3d::Zero();
     Vector3d brVector = Vector3d::Zero();
     double muZero = 1.0;
+	string magneticModel = "legacy";
+	double tipDipoleMoment = 0.0;
 
     double scaleRendering = 1.0;
 };

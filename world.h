@@ -14,8 +14,23 @@
 #include "elasticTwistingForce.h"
 #include "externalGravityForce.h"
 #include "externalMagneticForce.h"
+#include "tipMagneticForce.h"
 #include "inertialForce.h"
 #include "externalContactForce.h"
+#include "contact/planarBarrierContactForce.h"
+#include "geometry/planarSlabDomain.h"
+#include "geometry/sphericalShellDomain.h"
+#include "geometry/sphericalObstacleDomain.h"
+#include "geometry/doubleSphericalObstacleDomain.h"
+#include "contact/contactKktSystem.h"
+#include "contact/contactKktEquilibriumResult.h"
+#include "contact/contactConstraintAnalysis.h"
+#include "continuation/fieldContinuation.h"
+#include "continuation/actuationContinuation.h"
+#include "actuation.h"
+#include "plannerState.h"
+#include "insertion/insertionModel.h"
+#include "insertion/proximalGuideInsertionModel.h"
 
 // include external force
 #include "dampingForce.h"
@@ -25,6 +40,8 @@
 
 // include input file and option
 #include "setInput.h"
+#include "staticEvaluation.h"
+#include "equilibriumResult.h"
 
 class world
 {
@@ -37,11 +54,48 @@ public:
 	void setRodStepper();
 	void updateTimeStep();
 	double getStaticResidualNorm();
+	StaticEvaluation evaluateStaticSystem();
+	EquilibriumResult solveStaticEquilibrium();
+	void setAppliedField(const Vector3d &field);
+	Vector3d getAppliedField() const;
+	MatrixXd computeConfigurationFieldSensitivity();
+	const ContactDetectionResult &getLastContactDetection() const;
+	PlanarContactKktSeed buildPlanarContactKktSeed();
+	ContactKktEquilibriumResult solvePlanarContactKktEquilibrium();
+	ContactKktEquilibriumResult correctPlanarContactKktEquilibrium(
+		const ContactKktEquilibriumResult &warmStart);
+	ContactStabilityAnalysis analyzePlanarContactStability(
+		const ContactKktEquilibriumResult &equilibrium);
+	ContactEquilibriumSensitivity computePlanarContactFieldSensitivity(
+		const ContactKktEquilibriumResult &equilibrium);
+	ActuationEquilibriumSensitivity computePlanarContactActuationSensitivity(
+		const ContactKktEquilibriumResult &equilibrium);
+	Actuation getActuation() const;
+	void setActuation(const Actuation &actuation);
+	PlannerState capturePlannerState(
+		const ContactKktEquilibriumResult &equilibrium,
+		const ContactStabilityAnalysis &stability) const;
+	void restorePlannerState(const PlannerState &state);
+	FieldContinuationResult continuePlanarContactField(
+		const Vector3d &targetField,
+		const FieldContinuationOptions &options = FieldContinuationOptions());
+	ActuationContinuationResult continuePlanarContactActuation(
+		const Actuation &targetActuation,
+		const FieldContinuationOptions &options = FieldContinuationOptions());
+	ActuationContinuationResult continuePlanarContactActuation(
+		const PlannerState &startState,
+		const Actuation &targetActuation,
+		const FieldContinuationOptions &options = FieldContinuationOptions());
+	RodState captureRodState() const;
+	void restoreRodState(const RodState &state);
+	void applyFreeDofIncrement(const VectorXd &increment);
+	int numFreeDofs() const;
 	int simulationRunning();
 	int numPoints();
 	double getScaledCoordinate(int i);
 	double getCurrentTime();
 	double getTotalTime();
+	double getVelocityNorm() const;
 	
 	bool isRender();
 	
@@ -72,10 +126,35 @@ private:
 	Vector3d baVector;
     Vector3d brVector;
     double muZero;
+	string magneticModel;
+	double tipDipoleMoment;
 
     double thickness;
+	Vector3d shellCenter;
+	double shellRadius;
+	double shellMinusThickness;
+	double shellPlusThickness;
+	Vector3d cavityCenter;
+	double cavityRadius;
+	Vector3d obstacleCenter;
+	double obstacleRadius;
+	Vector3d secondObstacleCenter;
+	double secondObstacleRadius;
     double dBar;
     double stiffness;
+	string contactModel;
+	double tipSafeDistance;
+	int maxLineSearchIter;
+	double lineSearchReduction;
+	double lineSearchArmijo;
+	double kktGapTolerance;
+	double kktMultiplierTolerance;
+	double kktComplementarityTolerance;
+	int kktMaxActiveSetUpdates;
+	string insertionModel;
+	double insertionCoordinate;
+	double insertionStiffness;
+	Vector3d insertionAxis;
     
 	double tol, stol;
 	int maxIter; // maximum number of iterations
@@ -100,8 +179,13 @@ private:
 	inertialForce *m_inertialForce = nullptr;
 	externalGravityForce *m_gravityForce = nullptr;
 	externalMagneticForce *m_magneticForce = nullptr;
+	tipMagneticForce *m_tipMagneticForce = nullptr;
 	dampingForce *m_dampingForce = nullptr;
 	externalContactForce *m_externalContactForce = nullptr;
+	ConfinedDomain *m_contactDomain = nullptr;
+	PlanarBarrierContactForce *m_planarBarrierContactForce = nullptr;
+	InsertionModel *m_insertionModel = nullptr;
+	const ContactKktEquilibriumResult *m_kktWarmStart = nullptr;
 	
 	int Nstep;
 	int timeStep;
@@ -109,8 +193,16 @@ private:
 
 	void rodGeometry();
 	void rodBoundaryCondition();
-	void assembleStaticSystem();
+	ActuationContinuationResult continuePlanarContactActuationImpl(
+		const Actuation &targetActuation,
+		const FieldContinuationOptions &options,
+		const ContactKktEquilibriumResult *warmStart);
+	void assembleStaticSystem(bool includeContact = true);
 	void assembleDynamicSystem();
+	StaticEvaluation evaluatePhysicalStaticSystem();
+	ContactKktLinearization evaluatePlanarKktLinearization(
+		std::vector<ContactCandidate> &contacts,
+		const VectorXd &multipliers);
 	double computeResidualNorm() const;
     
 	bool render; // should the OpenGL rendering be included?
