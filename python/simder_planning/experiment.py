@@ -34,6 +34,7 @@ def _distance(left: Sequence[float], right: Sequence[float]) -> float:
 class LoggedState:
     node_index: int
     parent_index: Optional[int]
+    frontier: str
     tip_position: Tuple[float, float, float]
     insertion: float
     field: Tuple[float, float, float]
@@ -77,6 +78,11 @@ class RunRecord:
     shortlist_candidates_evaluated: int
     shortlist_non_nearest_selections: int
     shortlist_triggered_queries: int
+    backbone_expansion_queries: int
+    auxiliary_expansion_queries: int
+    backbone_node_count: int
+    auxiliary_node_count: int
+    local_steering_evaluations: int
     tree_contact_history_counts: Tuple[Tuple[str, int], ...]
     minimum_goal_distance_by_contact_history: Tuple[Tuple[str, float], ...]
     contact_transitions: int
@@ -180,6 +186,7 @@ def _logged_state(index: int, node: RRTNode) -> LoggedState:
     return LoggedState(
         node_index=index,
         parent_index=node.parent_index,
+        frontier=node.frontier,
         tip_position=tuple(float(value) for value in node.tip_position),
         insertion=float(node.state.actuation.xi),
         field=tuple(float(value) for value in node.state.actuation.field),
@@ -440,6 +447,15 @@ def run_task(
                 result.shortlist_non_nearest_selections
             ),
             shortlist_triggered_queries=result.shortlist_triggered_queries,
+            backbone_expansion_queries=result.backbone_expansion_queries,
+            auxiliary_expansion_queries=result.auxiliary_expansion_queries,
+            backbone_node_count=sum(
+                node.frontier == "backbone" for node in result.nodes
+            ),
+            auxiliary_node_count=sum(
+                node.frontier == "auxiliary" for node in result.nodes
+            ),
+            local_steering_evaluations=result.local_steering_evaluations,
             tree_contact_history_counts=tuple(sorted(tree_history_counts.items())),
             minimum_goal_distance_by_contact_history=tuple(
                 sorted(minimum_history_distance.items())

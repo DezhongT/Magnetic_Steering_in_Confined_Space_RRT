@@ -4,6 +4,11 @@ This repository contains the legacy discrete-elastic-rod simulator that will be
 used as the mechanics foundation for the mechanics-informed RRT described in
 [`doc/README_mechanics_informed_RRT.md`](doc/README_mechanics_informed_RRT.md).
 
+For code review, including the governing equations, implementation map,
+baseline definitions, complete test inventory, benchmark results, and failure
+analysis, start with
+[`doc/PLANNING_MATH_IMPLEMENTATION_REVIEW.md`](doc/PLANNING_MATH_IMPLEMENTATION_REVIEW.md).
+
 The current refactor status, design decisions, completed work, and exact next
 milestone are recorded in
 [`doc/DEVELOPMENT_HANDOFF.md`](doc/DEVELOPMENT_HANDOFF.md).
@@ -316,3 +321,15 @@ seed 5 at error `2.62e-7`, but its full ten-seed 15,000-work result remains
 starting at iteration 300, 400, or 500 cannot recover seed 5 because its
 decisive contact-history allocation occurs earlier. Global-nearest therefore
 remains the default while these deterministic modes support controlled studies.
+
+The dual-frontier planner, enabled with `--dual-frontier-period 2`, resolves
+the single-tree tradeoff. Backbone expansions retain their own exact index and
+the original sample stream; auxiliary nodes use a separate stream and cannot
+change future backbone parents. Both frontiers share the continuation-work cap.
+Across the established five cases it succeeds 10/10, 10/10, 5/10, 8/10, and
+10/10, compared with global-nearest 8/10, 8/10, 4/10, 8/10, and 8/10. At
+15,000 work every seed succeeds, median work is 3,174.5, and the original seed
+4/5 failures reach errors `1.29e-7` and `8.46e-7`. Planner logs distinguish
+backbone/auxiliary nodes and queries and count actual local-steering sensitivity
+evaluations. Dual frontier is the recommended robust mode for this benchmark;
+global nearest remains the simpler baseline and default.

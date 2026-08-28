@@ -50,6 +50,14 @@ def main() -> None:
         type=int,
         help="Invoke the history shortlist after N iterations without progress",
     )
+    shortlist_group.add_argument(
+        "--dual-frontier-period",
+        type=int,
+        help=(
+            "Preserve the global backbone and add one auxiliary history "
+            "expansion every N backbone iterations"
+        ),
+    )
     parser.add_argument(
         "--history-shortlist-progress",
         type=float,
@@ -80,6 +88,11 @@ def main() -> None:
         ),
         contact_history_shortlist_burst_iterations=(
             arguments.history_shortlist_burst
+        ),
+        use_dual_frontier=arguments.dual_frontier_period is not None,
+        dual_frontier_auxiliary_period=(
+            arguments.dual_frontier_period
+            if arguments.dual_frontier_period is not None else 4
         ),
     )
     if arguments.cases:

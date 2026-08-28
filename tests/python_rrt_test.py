@@ -69,6 +69,7 @@ assert [node.tip_position for node in repeat.nodes] == [
 ]
 assert result.nearest_neighbor_queries > 0
 assert result.nearest_neighbor_distance_evaluations > 0
+assert result.local_steering_evaluations > 0
 assert result.shortlist_candidates_evaluated == 0
 assert result.shortlist_non_nearest_selections == 0
 assert result.shortlist_triggered_queries == 0
@@ -122,6 +123,32 @@ assert [node.tip_position for node in periodic.nodes] == [
 ]
 assert periodic.shortlist_triggered_queries == periodic.iterations // 3
 assert periodic.shortlist_candidates_evaluated == periodic.shortlist_triggered_queries
+
+# Auxiliary history expansions use a separate random stream and never enter
+# the backbone index. Consequently, the backbone remains an exact prefix of
+# the unchanged deterministic baseline even while auxiliary nodes are added.
+dual_session = simder.MechanicsSession(config)
+dual_start = dual_session.solve_initial_state()
+dual = TipSpaceRRT(
+    dual_session,
+    replace(
+        rrt_config,
+        use_dual_frontier=True,
+        dual_frontier_auxiliary_period=3,
+    ),
+).plan(dual_start, goal)
+assert dual.success
+dual_backbone_tips = [
+    node.tip_position for node in dual.nodes if node.frontier == "backbone"
+]
+assert dual_backbone_tips == [
+    node.tip_position for node in result.nodes[:len(dual_backbone_tips)]
+]
+assert dual.backbone_expansion_queries > 0
+assert dual.auxiliary_expansion_queries > 0
+assert dual.shortlist_triggered_queries == dual.auxiliary_expansion_queries
+assert dual.local_steering_evaluations > 0
+assert any(node.frontier == "auxiliary" for node in dual.nodes)
 
 # A nearby connector with deliberately tiny actuation steps and one connector
 # iteration must fail cleanly while preserving the initial node for exploration.

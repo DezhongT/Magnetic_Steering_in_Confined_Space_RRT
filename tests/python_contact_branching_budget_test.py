@@ -45,6 +45,14 @@ assert (
     stagnation_cases[0].task.planner.contact_history_shortlist_stagnation_iterations
     == 50
 )
+dual_cases = contact_branching_budget_cases(
+    (0,),
+    profile="regression",
+    use_dual_frontier=True,
+    dual_frontier_auxiliary_period=4,
+)
+assert dual_cases[0].task.planner.use_dual_frontier
+assert dual_cases[0].task.planner.dual_frontier_auxiliary_period == 4
 
 record = run_contact_branching_budget_sweep(
     seeds=(0,),
@@ -67,6 +75,29 @@ assert run.nearest_neighbor_distance_evaluations > 0
 assert run.shortlist_candidates_evaluated == 0
 assert run.shortlist_non_nearest_selections == 0
 assert run.shortlist_triggered_queries == 0
+assert run.backbone_expansion_queries == run.nearest_neighbor_queries
+assert run.auxiliary_expansion_queries == 0
+assert run.backbone_node_count == run.accepted_node_count
+assert run.auxiliary_node_count == 0
+assert run.local_steering_evaluations > 0
+
+dual_record = run_contact_branching_budget_sweep(
+    seeds=(0,),
+    profile="regression",
+    methods=("mechanics_informed_rrt",),
+    use_dual_frontier=True,
+    dual_frontier_auxiliary_period=2,
+)
+dual_run = dual_record.cases[0].comparison.experiments[0].runs[0]
+assert dual_run.backbone_expansion_queries > 0
+assert dual_run.auxiliary_expansion_queries > 0
+assert dual_run.shortlist_triggered_queries == dual_run.auxiliary_expansion_queries
+assert dual_run.backbone_node_count + dual_run.auxiliary_node_count == (
+    dual_run.accepted_node_count
+)
+assert dual_run.auxiliary_node_count > 0
+assert dual_run.local_steering_evaluations > 0
+assert {state.frontier for state in dual_run.path} <= {"backbone", "auxiliary"}
 
 with tempfile.TemporaryDirectory() as temporary_directory:
     output = Path(temporary_directory) / "contact_budget.json"

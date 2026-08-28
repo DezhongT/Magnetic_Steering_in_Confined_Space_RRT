@@ -192,6 +192,8 @@ def contact_branching_budget_cases(
     contact_history_shortlist_stagnation_iterations: Optional[int] = None,
     contact_history_shortlist_stagnation_progress: float = 1.0e-4,
     contact_history_shortlist_burst_iterations: int = 1,
+    use_dual_frontier: bool = False,
+    dual_frontier_auxiliary_period: int = 4,
 ) -> Tuple[SweepCase, ...]:
     if profile not in ("full", "regression"):
         raise ValueError("Sweep profile must be 'full' or 'regression'")
@@ -201,6 +203,7 @@ def contact_branching_budget_cases(
         or contact_history_shortlist_start_iteration is not None
         or contact_history_shortlist_period is not None
         or contact_history_shortlist_stagnation_iterations is not None
+        or use_dual_frontier
     ):
         baseline = replace(
             baseline,
@@ -226,6 +229,8 @@ def contact_branching_budget_cases(
                 contact_history_shortlist_burst_iterations=(
                     contact_history_shortlist_burst_iterations
                 ),
+                use_dual_frontier=use_dual_frontier,
+                dual_frontier_auxiliary_period=dual_frontier_auxiliary_period,
             ),
         )
     definitions = (
@@ -367,6 +372,8 @@ def run_contact_branching_budget_sweep(
     contact_history_shortlist_stagnation_iterations: Optional[int] = None,
     contact_history_shortlist_stagnation_progress: float = 1.0e-4,
     contact_history_shortlist_burst_iterations: int = 1,
+    use_dual_frontier: bool = False,
+    dual_frontier_auxiliary_period: int = 4,
 ) -> RobustnessSweepRecord:
     return run_sweep(
         contact_branching_budget_cases(
@@ -386,6 +393,8 @@ def run_contact_branching_budget_sweep(
             contact_history_shortlist_burst_iterations=(
                 contact_history_shortlist_burst_iterations
             ),
+            use_dual_frontier=use_dual_frontier,
+            dual_frontier_auxiliary_period=dual_frontier_auxiliary_period,
         ),
         methods,
     )

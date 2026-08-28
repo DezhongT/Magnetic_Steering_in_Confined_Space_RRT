@@ -228,6 +228,8 @@ class RRTConfig:
     contact_history_shortlist_stagnation_iterations: Optional[int] = None
     contact_history_shortlist_stagnation_progress: float = 1.0e-4
     contact_history_shortlist_burst_iterations: int = 1
+    use_dual_frontier: bool = False
+    dual_frontier_auxiliary_period: int = 4
 
     def validated(self) -> "RRTConfig":
         lower = _vector3(self.workspace_min, "workspace_min")
@@ -288,6 +290,8 @@ class RRTConfig:
             raise ValueError("Contact-history stagnation progress must be positive")
         if self.contact_history_shortlist_burst_iterations <= 0:
             raise ValueError("Contact-history shortlist burst must be positive")
+        if self.dual_frontier_auxiliary_period <= 0:
+            raise ValueError("Dual-frontier auxiliary period must be positive")
         shortlist_modes = sum((
             self.use_contact_history_shortlist,
             self.contact_history_shortlist_start_iteration is not None,
@@ -296,6 +300,8 @@ class RRTConfig:
         ))
         if shortlist_modes > 1:
             raise ValueError("Only one contact-history shortlist mode may be active")
+        if self.use_dual_frontier and shortlist_modes > 0:
+            raise ValueError("Dual-frontier and single-tree shortlist modes conflict")
         return self
 
 
@@ -307,6 +313,7 @@ class RRTNode:
     edge_command: Optional[Tuple[float, float, float, float]]
     tip_actuation_jacobian: Optional[Tuple[Tuple[float, ...], ...]] = None
     contact_history: Tuple[int, ...] = ()
+    frontier: str = "backbone"
 
 
 def _state_contact_boundaries(state: object) -> Tuple[int, ...]:
@@ -330,6 +337,7 @@ class EdgeDiagnostic:
     contacts_released: int
     reached_path_fraction: float
     failure_reason: str = ""
+    frontier: str = "backbone"
 
 
 @dataclass(frozen=True)
@@ -393,6 +401,9 @@ class RRTResult:
     shortlist_candidates_evaluated: int = 0
     shortlist_non_nearest_selections: int = 0
     shortlist_triggered_queries: int = 0
+    backbone_expansion_queries: int = 0
+    auxiliary_expansion_queries: int = 0
+    local_steering_evaluations: int = 0
 
     def path_indices(self) -> List[int]:
         if self.goal_index is None:
@@ -526,10 +537,11 @@ class TipSpaceRRT:
         nodes: Sequence[RRTNode],
         candidates: Sequence[int],
         sample: Vector3,
-    ) -> Optional[Tuple[int, _SteeringProposal, int]]:
+    ) -> Optional[Tuple[int, _SteeringProposal, int, int]]:
         """Choose the most feasible local prediction, with deterministic ties."""
         best: Optional[Tuple[Tuple[float, float, int], int, _SteeringProposal]] = None
         evaluated = 0
+        steering_evaluations = 0
         for parent_index in sorted(candidates):
             parent = nodes[parent_index]
             desired = self._desired_step(parent.tip_position, sample)
@@ -537,6 +549,7 @@ class TipSpaceRRT:
                 continue
             if parent.tip_actuation_jacobian is None:
                 steering = self.session.evaluate_local_steering(parent.state)
+                steering_evaluations += 1
                 parent.tip_actuation_jacobian = tuple(
                     tuple(row) for row in steering.tip_actuation_jacobian
                 )
@@ -565,7 +578,7 @@ class TipSpaceRRT:
                 best = candidate
         if best is None:
             return None
-        return best[1], best[2], evaluated
+        return best[1], best[2], evaluated, steering_evaluations
 
     def _bounded_actuation(
         self,
@@ -810,6 +823,7 @@ class TipSpaceRRT:
                 current_index,
                 command,
                 contact_history=_extended_contact_history(current, edge.state),
+                frontier=current.frontier,
             ))
             current_index = len(nodes) - 1
             if error_after <= self.config.terminal_tolerance:
@@ -826,7 +840,298 @@ class TipSpaceRRT:
         )
         return _TerminalConnection(False, current_index, diagnostic)
 
+    def _plan_dual_frontier(
+        self, initial_state: object, goal: Sequence[float]
+    ) -> RRTResult:
+        if self.proposal_policy != "mechanics_informed":
+            raise ValueError("Dual-frontier planning requires mechanics steering")
+        goal_vector, initial_tip = self._validate_problem(initial_state, goal)
+        backbone_generator = random.Random(self.config.random_seed)
+        auxiliary_generator = random.Random(
+            self.config.random_seed ^ 0x9E3779B9
+        )
+        nodes = [RRTNode(
+            initial_state,
+            initial_tip,
+            None,
+            None,
+            contact_history=_state_contact_boundaries(initial_state),
+            frontier="backbone",
+        )]
+        diagnostics: List[EdgeDiagnostic] = []
+        terminal_diagnostics: List[TerminalDiagnostic] = []
+        continuation_work = 0
+        local_steering_evaluations = 0
+        nearest_queries = 0
+        nearest_evaluations = 0
+        shortlist_candidates = 0
+        shortlist_non_nearest = 0
+        shortlist_queries = 0
+        backbone_queries = 0
+        auxiliary_queries = 0
+        backbone_index = _DeterministicTipIndex(
+            self.config.spatial_index_rebuild_minimum
+        )
+        backbone_indices: List[int] = []
+        history_indices = {}
+        registered_node_count = 0
+
+        def register_new_nodes() -> None:
+            nonlocal registered_node_count
+            while registered_node_count < len(nodes):
+                index = registered_node_count
+                node = nodes[index]
+                if node.frontier == "backbone":
+                    backbone_index.add(index)
+                    backbone_indices.append(index)
+                if node.contact_history not in history_indices:
+                    history_indices[node.contact_history] = _DeterministicTipIndex(
+                        self.config.spatial_index_rebuild_minimum
+                    )
+                history_indices[node.contact_history].add(index)
+                registered_node_count += 1
+
+        register_new_nodes()
+
+        def budget_exhausted() -> bool:
+            return (
+                self.config.maximum_continuation_steps is not None
+                and continuation_work >= self.config.maximum_continuation_steps
+            )
+
+        def make_result(
+            success: bool,
+            goal_index: Optional[int],
+            iterations: int,
+            reason: str,
+        ) -> RRTResult:
+            return RRTResult(
+                success,
+                nodes,
+                diagnostics,
+                terminal_diagnostics,
+                goal_index,
+                iterations,
+                reason,
+                continuation_work,
+                nearest_queries,
+                nearest_evaluations,
+                shortlist_candidates,
+                shortlist_non_nearest,
+                shortlist_queries,
+                backbone_queries,
+                auxiliary_queries,
+                local_steering_evaluations,
+            )
+
+        def attempt_expansion(
+            sample: Vector3,
+            iteration: int,
+            frontier: str,
+            use_shortlist: bool,
+        ) -> Optional[_TerminalConnection]:
+            nonlocal continuation_work
+            nonlocal nearest_queries, nearest_evaluations
+            nonlocal shortlist_candidates, shortlist_non_nearest
+            nonlocal shortlist_queries, backbone_queries, auxiliary_queries
+            nonlocal local_steering_evaluations
+
+            if frontier == "backbone":
+                backbone_queries += 1
+            else:
+                auxiliary_queries += 1
+
+            shortlist_proposal: Optional[_SteeringProposal] = None
+            if use_shortlist:
+                shortlist_queries += 1
+                if self.config.use_spatial_index:
+                    candidates = []
+                    evaluations = 0
+                    for history in sorted(history_indices):
+                        candidate, history_evaluations = history_indices[
+                            history
+                        ].nearest(nodes, sample)
+                        candidates.append(candidate)
+                        evaluations += history_evaluations
+                else:
+                    nearest_by_history = {}
+                    for index, node in enumerate(nodes):
+                        candidate = (
+                            _squared_distance(node.tip_position, sample), index
+                        )
+                        previous = nearest_by_history.get(node.contact_history)
+                        if previous is None or candidate < previous:
+                            nearest_by_history[node.contact_history] = candidate
+                    candidates = [
+                        candidate[1]
+                        for _, candidate in sorted(nearest_by_history.items())
+                    ]
+                    evaluations = len(nodes)
+                global_nearest = min(
+                    candidates,
+                    key=lambda index: (
+                        _squared_distance(nodes[index].tip_position, sample), index
+                    ),
+                )
+                selection = self._select_shortlist_proposal(
+                    nodes, candidates, sample
+                )
+                nearest_queries += 1
+                nearest_evaluations += evaluations
+                if selection is None:
+                    return None
+                (
+                    parent_index,
+                    shortlist_proposal,
+                    evaluated,
+                    new_steering_evaluations,
+                ) = selection
+                shortlist_candidates += evaluated
+                local_steering_evaluations += new_steering_evaluations
+                shortlist_non_nearest += int(parent_index != global_nearest)
+            else:
+                if self.config.use_spatial_index:
+                    parent_index, evaluations = backbone_index.nearest(
+                        nodes, sample
+                    )
+                else:
+                    evaluations = len(backbone_indices)
+                    parent_index = min(
+                        backbone_indices,
+                        key=lambda index: (
+                            _squared_distance(nodes[index].tip_position, sample),
+                            index,
+                        ),
+                    )
+                nearest_queries += 1
+                nearest_evaluations += evaluations
+
+            parent = nodes[parent_index]
+            desired = self._desired_step(parent.tip_position, sample)
+            if desired is None:
+                return None
+            if shortlist_proposal is not None:
+                proposal = shortlist_proposal.target, shortlist_proposal.command
+            else:
+                if parent.tip_actuation_jacobian is None:
+                    steering = self.session.evaluate_local_steering(parent.state)
+                    local_steering_evaluations += 1
+                    parent.tip_actuation_jacobian = tuple(
+                        tuple(row) for row in steering.tip_actuation_jacobian
+                    )
+                proposal = self._steer(
+                    parent.state, parent.tip_actuation_jacobian, desired
+                )
+                if proposal is None:
+                    return None
+            target, command = proposal
+            edge = self.session.attempt_continuation(
+                parent.state, target, self.continuation_options
+            )
+            continuation_work += edge.attempted_steps
+            accepted = edge.success
+            if accepted:
+                tip = _vector3(edge.state.tip_position, "continued tip")
+                accepted = (
+                    _distance(tip, parent.tip_position)
+                    >= self.config.minimum_tip_progress
+                )
+            diagnostics.append(EdgeDiagnostic(
+                iteration,
+                parent_index,
+                accepted,
+                not edge.success,
+                sample,
+                edge.attempted_steps,
+                edge.rejected_steps,
+                edge.contacts_added,
+                edge.contacts_released,
+                edge.reached_path_fraction,
+                edge.failure_reason,
+                frontier,
+            ))
+            if not accepted:
+                return None
+            nodes.append(RRTNode(
+                edge.state,
+                tip,
+                parent_index,
+                command,
+                contact_history=_extended_contact_history(parent, edge.state),
+                frontier=frontier,
+            ))
+            register_new_nodes()
+            if _distance(tip, goal_vector) > self.config.goal_neighborhood_radius:
+                return None
+            terminal = self._connect_terminal(
+                nodes, len(nodes) - 1, goal_vector
+            )
+            register_new_nodes()
+            terminal_diagnostics.append(terminal.diagnostic)
+            continuation_work += sum(
+                step.attempted_steps for step in terminal.diagnostic.steps
+            )
+            local_steering_evaluations += len({
+                step.connector_iteration for step in terminal.diagnostic.steps
+            })
+            return terminal if terminal.success else None
+
+        if _distance(initial_tip, goal_vector) <= self.config.goal_neighborhood_radius:
+            terminal = self._connect_terminal(nodes, 0, goal_vector)
+            register_new_nodes()
+            terminal_diagnostics.append(terminal.diagnostic)
+            continuation_work += sum(
+                step.attempted_steps for step in terminal.diagnostic.steps
+            )
+            local_steering_evaluations += len({
+                step.connector_iteration for step in terminal.diagnostic.steps
+            })
+            if terminal.success:
+                return make_result(True, terminal.final_index, 0, "goal_reached")
+            if budget_exhausted():
+                return make_result(False, None, 0, "mechanics_work_budget")
+
+        for iteration in range(1, self.config.maximum_iterations + 1):
+            if budget_exhausted():
+                return make_result(
+                    False, None, iteration - 1, "mechanics_work_budget"
+                )
+            backbone_terminal = attempt_expansion(
+                self._sample(backbone_generator, goal_vector),
+                iteration,
+                "backbone",
+                False,
+            )
+            if backbone_terminal is not None:
+                return make_result(
+                    True, backbone_terminal.final_index, iteration, "goal_reached"
+                )
+            if budget_exhausted():
+                return make_result(
+                    False, None, iteration, "mechanics_work_budget"
+                )
+            if iteration % self.config.dual_frontier_auxiliary_period == 0:
+                auxiliary_terminal = attempt_expansion(
+                    self._sample(auxiliary_generator, goal_vector),
+                    iteration,
+                    "auxiliary",
+                    True,
+                )
+                if auxiliary_terminal is not None:
+                    return make_result(
+                        True,
+                        auxiliary_terminal.final_index,
+                        iteration,
+                        "goal_reached",
+                    )
+
+        return make_result(
+            False, None, self.config.maximum_iterations, "iteration_budget"
+        )
+
     def plan(self, initial_state: object, goal: Sequence[float]) -> RRTResult:
+        if self.config.use_dual_frontier:
+            return self._plan_dual_frontier(initial_state, goal)
         goal_vector, initial_tip = self._validate_problem(initial_state, goal)
         generator = random.Random(self.config.random_seed)
         nodes = [RRTNode(
@@ -844,6 +1149,7 @@ class TipSpaceRRT:
         shortlist_candidates = 0
         shortlist_non_nearest = 0
         shortlist_queries = 0
+        local_steering_evaluations = 0
         last_significant_progress_iteration = 0
         last_significant_progress_distance = _distance(initial_tip, goal_vector)
         last_stagnation_trigger_iteration = 0
@@ -882,13 +1188,17 @@ class TipSpaceRRT:
             continuation_work += sum(
                 step.attempted_steps for step in terminal.diagnostic.steps
             )
+            local_steering_evaluations += len({
+                step.connector_iteration for step in terminal.diagnostic.steps
+            })
             if terminal.success:
                 return RRTResult(
                     True, nodes, diagnostics, terminal_diagnostics,
                     terminal.final_index, 0, "goal_reached", continuation_work,
                     nearest_queries, nearest_evaluations,
                     shortlist_candidates, shortlist_non_nearest,
-                    shortlist_queries
+                    shortlist_queries, nearest_queries, 0,
+                    local_steering_evaluations
                 )
             if budget_exhausted():
                 return RRTResult(
@@ -896,7 +1206,8 @@ class TipSpaceRRT:
                     None, 0, "mechanics_work_budget", continuation_work,
                     nearest_queries, nearest_evaluations,
                     shortlist_candidates, shortlist_non_nearest,
-                    shortlist_queries
+                    shortlist_queries, nearest_queries, 0,
+                    local_steering_evaluations
                 )
 
         for iteration in range(1, self.config.maximum_iterations + 1):
@@ -906,7 +1217,8 @@ class TipSpaceRRT:
                     None, iteration - 1, "mechanics_work_budget",
                     continuation_work, nearest_queries, nearest_evaluations,
                     shortlist_candidates, shortlist_non_nearest,
-                    shortlist_queries
+                    shortlist_queries, nearest_queries, 0,
+                    local_steering_evaluations
                 )
             sample = self._sample(generator, goal_vector)
             periodic_trigger = (
@@ -988,8 +1300,14 @@ class TipSpaceRRT:
                 nearest_evaluations += evaluations
                 if selection is None:
                     continue
-                parent_index, shortlist_proposal, evaluated = selection
+                (
+                    parent_index,
+                    shortlist_proposal,
+                    evaluated,
+                    new_steering_evaluations,
+                ) = selection
                 shortlist_candidates += evaluated
+                local_steering_evaluations += new_steering_evaluations
                 shortlist_non_nearest += int(parent_index != global_nearest)
             else:
                 if self.config.use_spatial_index:
@@ -1012,6 +1330,7 @@ class TipSpaceRRT:
                 else:
                     if parent.tip_actuation_jacobian is None:
                         steering = self.session.evaluate_local_steering(parent.state)
+                        local_steering_evaluations += 1
                         parent.tip_actuation_jacobian = tuple(
                             tuple(row) for row in steering.tip_actuation_jacobian
                         )
@@ -1077,13 +1396,17 @@ class TipSpaceRRT:
                 continuation_work += sum(
                     step.attempted_steps for step in terminal.diagnostic.steps
                 )
+                local_steering_evaluations += len({
+                    step.connector_iteration for step in terminal.diagnostic.steps
+                })
                 if terminal.success:
                     return RRTResult(
                         True, nodes, diagnostics, terminal_diagnostics,
                         terminal.final_index, iteration, "goal_reached",
                         continuation_work, nearest_queries, nearest_evaluations,
                         shortlist_candidates, shortlist_non_nearest,
-                        shortlist_queries
+                        shortlist_queries, nearest_queries, 0,
+                        local_steering_evaluations
                     )
                 if budget_exhausted():
                     return RRTResult(
@@ -1091,7 +1414,8 @@ class TipSpaceRRT:
                         None, iteration, "mechanics_work_budget",
                         continuation_work, nearest_queries, nearest_evaluations,
                         shortlist_candidates, shortlist_non_nearest,
-                        shortlist_queries
+                        shortlist_queries, nearest_queries, 0,
+                        local_steering_evaluations
                     )
 
         return RRTResult(
@@ -1108,6 +1432,9 @@ class TipSpaceRRT:
             shortlist_candidates,
             shortlist_non_nearest,
             shortlist_queries,
+            nearest_queries,
+            0,
+            local_steering_evaluations,
         )
 
 
@@ -1137,6 +1464,7 @@ class LocalGoalSeekingPlanner(TipSpaceRRT):
         diagnostics: List[EdgeDiagnostic] = []
         terminal_diagnostics: List[TerminalDiagnostic] = []
         continuation_work = 0
+        local_steering_evaluations = 0
 
         def budget_exhausted() -> bool:
             return (
@@ -1150,15 +1478,20 @@ class LocalGoalSeekingPlanner(TipSpaceRRT):
             continuation_work += sum(
                 step.attempted_steps for step in terminal.diagnostic.steps
             )
+            local_steering_evaluations += len({
+                step.connector_iteration for step in terminal.diagnostic.steps
+            })
             if terminal.success:
                 return RRTResult(
                     True, nodes, diagnostics, terminal_diagnostics,
-                    terminal.final_index, 0, "goal_reached", continuation_work
+                    terminal.final_index, 0, "goal_reached", continuation_work,
+                    local_steering_evaluations=local_steering_evaluations,
                 )
             if budget_exhausted():
                 return RRTResult(
                     False, nodes, diagnostics, terminal_diagnostics,
-                    None, 0, "mechanics_work_budget", continuation_work
+                    None, 0, "mechanics_work_budget", continuation_work,
+                    local_steering_evaluations=local_steering_evaluations,
                 )
 
         for iteration in range(1, self.config.maximum_iterations + 1):
@@ -1166,7 +1499,8 @@ class LocalGoalSeekingPlanner(TipSpaceRRT):
                 return RRTResult(
                     False, nodes, diagnostics, terminal_diagnostics,
                     None, iteration - 1, "mechanics_work_budget",
-                    continuation_work
+                    continuation_work,
+                    local_steering_evaluations=local_steering_evaluations,
                 )
             parent_index = len(nodes) - 1
             parent = nodes[parent_index]
@@ -1174,6 +1508,7 @@ class LocalGoalSeekingPlanner(TipSpaceRRT):
             if desired is None:
                 break
             steering = self.session.evaluate_local_steering(parent.state)
+            local_steering_evaluations += 1
             parent.tip_actuation_jacobian = tuple(
                 tuple(row) for row in steering.tip_actuation_jacobian
             )
@@ -1226,11 +1561,15 @@ class LocalGoalSeekingPlanner(TipSpaceRRT):
                 continuation_work += sum(
                     step.attempted_steps for step in terminal.diagnostic.steps
                 )
+                local_steering_evaluations += len({
+                    step.connector_iteration for step in terminal.diagnostic.steps
+                })
                 if terminal.success:
                     return RRTResult(
                         True, nodes, diagnostics, terminal_diagnostics,
                         terminal.final_index, iteration, "goal_reached",
-                        continuation_work
+                        continuation_work,
+                        local_steering_evaluations=local_steering_evaluations,
                     )
                 break
 
@@ -1244,4 +1583,5 @@ class LocalGoalSeekingPlanner(TipSpaceRRT):
             len(diagnostics),
             reason,
             continuation_work,
+            local_steering_evaluations=local_steering_evaluations,
         )

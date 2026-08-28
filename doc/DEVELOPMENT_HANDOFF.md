@@ -1,6 +1,12 @@
 # Development Handoff
 
-Last updated: 2026-08-26
+Last updated: 2026-08-27
+
+For current equations, baseline definitions, verified result tables, and
+failure analysis, use
+[`PLANNING_MATH_IMPLEMENTATION_REVIEW.md`](PLANNING_MATH_IMPLEMENTATION_REVIEW.md).
+This handoff retains historical intermediate results and should not be used as
+the sole source for current benchmark numbers.
 
 ## 1. Project purpose
 
@@ -14,9 +20,11 @@ twisting, inertia, gravity, viscous damping, distributed magnetic loading, and
 penalty/barrier contact against a triangle mesh. It can run headlessly or draw
 the rod and mesh through OpenGL/GLUT.
 
-The current repository should be regarded as a working legacy simulator plus
-a tested mechanics-library refactor with planar equilibrium continuation. It
-is not yet the full mechanics-informed RRT implementation.
+The current repository contains the legacy simulator, the tested static/KKT
+mechanics library, Python planning interface, deterministic planner baselines,
+contact-history selectors, and the isolated dual-frontier RRT benchmark mode.
+Known physical-model and broader-validation limitations are listed in the
+review document.
 
 ## 2. Agreed technical direction
 
@@ -1336,6 +1344,42 @@ iteration 300, 400, or 500 does not rescue seed 5, showing that the decisive
 history allocation occurs early. These hybrids remain experimental and the
 global-nearest selector remains the default.
 
+### 3.35 Isolated dual frontiers
+
+`RRTConfig.use_dual_frontier` enables a separate global-nearest backbone and
+auxiliary contact-history frontier. The backbone owns an exact index containing
+only backbone nodes and consumes the original seeded sample stream. Auxiliary
+expansions use a separate deterministic stream and the history-stratified
+shortlist over all available nodes. Auxiliary and connector descendants are
+tagged explicitly and never enter the backbone index, so auxiliary exploration
+cannot change later backbone parents. Both frontiers share the same soft
+continuation-work cap. `--dual-frontier-period N` exposes the cadence in the
+budget runner.
+
+Regression coverage runs active auxiliary expansions on the reachable-goal
+problem and requires the backbone tips to equal an exact prefix of the original
+baseline. Logged states identify their frontier; run records report backbone
+and auxiliary queries/node counts, shortlist choices, nearest-distance work,
+and actual calls to the local equilibrium-sensitivity evaluator.
+
+Cadence tuning on seeds 4 and 5 shows that periods 4 and 8 still miss seed 5.
+Period 2 succeeds on both: seed 4 reaches error `1.29e-7` in 302 backbone
+iterations and 6,967 continuation steps; seed 5 reaches `8.46e-7` in 182
+iterations and 3,806 steps. The complete ten-seed matrix is:
+
+- 500 iterations / 15,000 work: 10/10;
+- 1,000 iterations / 15,000 work: 10/10;
+- 3,000 work: 5/10;
+- 7,000 work: 8/10;
+- 15,000 work: 10/10.
+
+The corresponding global-nearest counts are 8/10, 8/10, 4/10, 8/10, and
+8/10. At 15,000 work every dual-frontier run reaches the goal, median work is
+3,174.5, the Wilson 95% interval is 0.722--1.000, and successful histories are
+five boundary-1-only, two boundary-2-only, and three mixed. Total wall time for
+that case was about 350 seconds on this workstation. This is the first policy
+to improve aggregate robustness rather than exchange failure seeds.
+
 ## 4. Build and run on another workstation
 
 ### Required dependencies
@@ -1524,27 +1568,27 @@ sufficient for an augmented contact KKT system.
   shell Task B, a tip-obstacle dead end, a ten-seed one-factor robustness
   sweep, and a two-obstacle body-contact-history branch. It has an exact
   deterministic spatial index and an optional mechanics/history-aware
-  shortlist, but no wall-clock timeout or hybrid fallback policy.
+  shortlist plus isolated dual frontiers, but no wall-clock timeout or total
+  Newton/KKT-factorization budget.
 - `world::CoutData()` still does not write simulation state or metrics.
 - Versioned planning logs exist, but Newton/KKT factorization counts are not
   yet exposed through `MechanicsSession`.
 
 ## 7. Exact next milestone
 
-Always-on, low-cadence, stagnation, burst, and late-start shortlist policies are
-implemented and measured. Period-20/burst-5 recovers critical seeds 2, 5, and
-7, but the full ten-seed result remains 8/10 because seeds 1 and 4 are
-displaced. A single shared tree therefore cannot add history exploration
-without changing the deterministic global-nearest backbone.
+The isolated dual-frontier milestone is complete. Period 2 preserves the exact
+global backbone, adds the two former failure seeds, and achieves 10/10 at the
+same 15,000 continuation-work cap. The full five-case matrix and local-steering
+evaluation instrumentation are in place. This is a good stopping
+point: the measured selection failure is resolved without modifying the
+validated baseline or introducing rewiring.
 
-Next, prototype a deterministic dual-frontier planner: keep a global-nearest
-backbone whose index contains only backbone nodes, and schedule auxiliary
-history-stratified expansions without allowing those nodes to perturb backbone
-selection. Use an explicit shared continuation-work allocation and report
-local-steering evaluations separately. First test whether it preserves all
-eight baseline successes while adding seed 5; do not claim improvement unless
-the ten-seed result exceeds 8/10 under the same total work cap. Continue to
-defer RRT* and rewiring.
+When work resumes, broaden evidence rather than tune another selector. Expose
+Newton iterations and KKT/factorization counts from `MechanicsSession`, define
+a combined mechanics-cost budget that includes local sensitivity evaluations,
+then run at least 30 seeds with small obstacle/target perturbations. Keep dual
+frontier opt-in until that broader study confirms the 10/10 result is not tied
+to this exact deterministic benchmark. Continue to defer RRT* and rewiring.
 
 ## 8. Planned order after the next milestone
 
@@ -1607,8 +1651,11 @@ defer RRT* and rewiring.
 25. ~~Deterministic low-cadence, stagnation, burst, and late-start hybrid
     shortlist policies.~~ Completed; period-20/burst-5 preserves critical
     seeds 2/5/7 but still swaps two failures in the full ten-seed case.
-26. Separate deterministic global-backbone and auxiliary history frontiers
-    under one explicit mechanics-work allocation.
+26. ~~Separate deterministic global-backbone and auxiliary history frontiers
+    under one explicit mechanics-work allocation.~~ Completed; period 2 reaches
+    10/10 at 15,000 work and preserves an exact baseline-backbone prefix.
+27. Combined Newton/KKT/sensitivity work accounting and a perturbed 30-seed
+    robustness study before changing the recommended default.
 
 Keep RRT*, bidirectional growth, and mechanics-aware node ranking deferred
 until the baseline, terminal connector, and benchmark logging are validated.
